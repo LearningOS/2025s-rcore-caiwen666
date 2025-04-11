@@ -54,6 +54,7 @@ lazy_static! {
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
+            task_syscall_trace: [0; 411]
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
@@ -135,6 +136,20 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+    /// 更新当前任务的系统调用次数，即 +1
+    fn update_syscall_trace(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let task = &mut inner.tasks[current];
+        task.task_syscall_trace[syscall_id] += 1;
+    }
+    /// 获取指定 syscall 的调用次数
+    fn get_syscall_trace(&self, syscall_id: usize) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let task = &inner.tasks[current];
+        task.task_syscall_trace[syscall_id]
+    }
 }
 
 /// Run the first task in task list.
@@ -168,4 +183,14 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// 更新当前任务的系统调用次数，即 +1
+pub fn update_syscall_trace(syscall_id: usize) {
+    TASK_MANAGER.update_syscall_trace(syscall_id);
+}
+
+/// 获取指定 syscall 的调用次数
+pub fn get_syscall_trace(syscall_id: usize) -> usize {
+    TASK_MANAGER.get_syscall_trace(syscall_id)
 }
