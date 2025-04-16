@@ -25,6 +25,10 @@ pub fn sys_yield() -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
+/// 这里参考了 https://rcore-os.cn/rCore-Tutorial-Book-v3/chapter4/6multitasking-based-on-as.html 下方网友的评论
+/// hongjil commented on 2022年11月30日
+/// 在本章练习中，我们需要重写sys_get_time()函数，但是不像sys_write() 我们可以方便地用多个切片的方式去重复执行；我能想到的一种比较好的方式是先用一个本地变量去存储TimeVal，然后再拷贝到对应的切片上。
+/// 受其启发，我这里也建立一个局部的结构体，然后专门做了个函数用来拷贝过去，以应对分页的问题
 pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel: sys_get_time");
     let us = get_time_us();
