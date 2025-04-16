@@ -15,6 +15,7 @@ mod switch;
 mod task;
 
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{MapPermission, VPNRange};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
@@ -153,6 +154,59 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    /// 更新当前任务系统调用次数
+    fn update_syscall_cnt(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let task = &mut inner.tasks[current];
+        let cnt_map = &mut task.syscall_cnt;
+        let mut cnt = cnt_map.get_mut(&syscall_id);
+        if cnt.is_none() {
+            cnt_map.insert(syscall_id, 0);
+            cnt = cnt_map.get_mut(&syscall_id);
+        }
+        let cnt = cnt.unwrap();
+        *cnt += 1;
+    }
+
+    /// 获取当前任务系统调用次数
+    fn get_syscall_cnt(&self, syscall_id: usize) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let task = &inner.tasks[current];
+        let cnt_map = &task.syscall_cnt;
+        *cnt_map.get(&syscall_id).unwrap_or(&0)
+    }
+
+    /// 为当前任务建立内存映射关系
+    fn map_extra(&self, range: VPNRange, flags: MapPermission) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let task = &mut inner.tasks[current];
+        for i in range {
+            debug!("[kernel] mapped {:?}", i);
+            task.memory_set.push_one(i, flags);
+        }
+    }
+
+    /// 取消当前任务的内存映射关系
+    /// 返回是否成功
+    fn unmap_extra(&self, range: VPNRange) -> bool {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let task = &mut inner.tasks[current];
+        // check
+        for i in range.clone() {
+            if !task.memory_set.has_one(i) {
+                return false;
+            }
+        }
+        for i in range {
+            task.memory_set.pop_one(i);
+        }
+        true
+    }
 }
 
 /// Run the first task in task list.
@@ -201,4 +255,24 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// 更新当前任务系统调用次数
+pub fn update_syscall_cnt(syscall_id: usize) {
+    TASK_MANAGER.update_syscall_cnt(syscall_id);
+}
+
+/// 获取当前任务系统调用次数
+pub fn get_syscall_cnt(syscall_id: usize) -> usize {
+    TASK_MANAGER.get_syscall_cnt(syscall_id)
+}
+
+/// 为当前任务建立内存映射关系
+pub fn map_extra(range: VPNRange, flags: MapPermission) {
+    TASK_MANAGER.map_extra(range, flags);
+}
+
+/// 取消当前任务的内存映射关系
+pub fn unmap_extra(range: VPNRange) -> bool {
+    TASK_MANAGER.unmap_extra(range)
 }

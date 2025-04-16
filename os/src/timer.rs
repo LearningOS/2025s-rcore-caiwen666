@@ -4,7 +4,7 @@ use crate::config::CLOCK_FREQ;
 use crate::sbi::set_timer;
 use riscv::register::time;
 /// The number of ticks per second
-const TICKS_PER_SEC: usize = 100;
+const TICKS_PER_SEC: usize = 1;
 #[allow(dead_code)]
 /// The number of milliseconds per second
 const MSEC_PER_SEC: usize = 1000;

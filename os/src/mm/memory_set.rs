@@ -37,6 +37,7 @@ lazy_static! {
 pub struct MemorySet {
     page_table: PageTable,
     areas: Vec<MapArea>,
+    mmap: BTreeMap<VirtPageNum, FrameTracker>,  // 存储 mmap 映射的虚拟页，areas 是连续的块，mmap 是散的
 }
 
 impl MemorySet {
@@ -45,6 +46,7 @@ impl MemorySet {
         Self {
             page_table: PageTable::new(),
             areas: Vec::new(),
+            mmap: BTreeMap::new()
         }
     }
     /// Get the page table token
@@ -261,6 +263,27 @@ impl MemorySet {
         } else {
             false
         }
+    }
+
+    /// 单独映射一个虚拟地址页
+    pub fn push_one(&mut self, vpn: VirtPageNum, flags: MapPermission) {
+        let frame = frame_alloc().unwrap();
+        let ppn = frame.ppn;
+        debug!("[kernel] push_one: map {:?} to {:?}", vpn, ppn);
+        self.mmap.insert(vpn, frame);
+        let pte_flags = PTEFlags::from_bits(flags.bits).unwrap();
+        self.page_table.map(vpn, ppn, pte_flags);
+    }
+
+    /// 取消映射之前单独映射的页
+    pub fn pop_one(&mut self, vpn: VirtPageNum) {
+        self.mmap.remove(&vpn);
+        self.page_table.unmap(vpn);
+    }
+
+    /// 判断是否单独映射了这个页
+    pub fn has_one(&self, vpn: VirtPageNum) -> bool {
+        self.mmap.contains_key(&vpn)
     }
 }
 /// map area structure, controls a contiguous piece of virtual memory

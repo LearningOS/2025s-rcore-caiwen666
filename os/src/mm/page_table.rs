@@ -70,6 +70,10 @@ impl PageTableEntry {
     pub fn executable(&self) -> bool {
         (self.flags() & PTEFlags::X) != PTEFlags::empty()
     }
+    /// 是否可被用户访问
+    pub fn user_accessible(&self) -> bool {
+        (self.flags() & PTEFlags::U) != PTEFlags::empty()
+    }
 }
 
 /// page table structure
@@ -179,3 +183,53 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
     }
     v
 }
+
+/// 将数据拷贝到某个地址空间的某个指针处
+pub fn copy_to_virt_addr<T: Sized>(token: usize, ptr: *const u8, data: &T) {
+    let len = core::mem::size_of::<T>();
+    let buffer = translated_byte_buffer(token, ptr, len);
+    unsafe {
+        let res_slice = core::slice::from_raw_parts(data as *const _ as usize as *const u8, len);
+        let mut ok = 0;
+        for piece in buffer {
+            piece.copy_from_slice(&res_slice[ok..ok + piece.len()]);
+            ok += piece.len();
+        }
+    }
+}
+
+/// 获取某段虚拟地址处的 flags
+/// 如果跨了多个页则取交集
+/// 如果某段地址无效则返回 None
+pub fn get_virt_addr_flags(token: usize, start_va: usize, end_va: usize) -> Option<PTEFlags> {
+    let page_table = PageTable::from_token(token);
+    let mut start = start_va;
+    let mut res = PTEFlags::all();
+    while start < end_va {
+        let start_va = VirtAddr::from(start);
+        let mut vpn = start_va.floor();
+        let pte = page_table.translate(vpn);
+        if pte.is_none() {
+            return None;
+        }
+        let pte = pte.unwrap();
+        res &= pte.flags();
+        vpn.step();
+        start = VirtAddr::from(vpn).into();
+    }
+    Some(res)
+}
+
+// /// 读某段虚拟地址到指定类型
+// /// 注意需要确保 N 是 T 的大小
+// /// 这里使用 const 泛型是 AI 给的建议。Rust 不能建立一个长度是变量的数组，尽管 core::mem::size_of 是一个 const 函数，理论上可以编译期计算的。
+// pub fn translate_to_type<T: Sized + Clone, const N: usize>(token: usize, ptr: usize) -> T {
+//     let buffer = translated_byte_buffer(token, ptr as *const u8, N);
+//     let mut local = [0 as u8; N];
+//     let mut ok = 0;
+//     for piece in buffer {
+//         &mut local[ok..ok + piece.len()].copy_from_slice(piece);
+//         ok += piece.len()
+//     }
+//     unsafe { (*(local.as_ptr() as usize as *const T)).clone() }
+// }
