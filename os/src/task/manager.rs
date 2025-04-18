@@ -4,6 +4,9 @@ use crate::sync::UPSafeCell;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use lazy_static::*;
+
+const BIG_STRIDE: usize = 300;
+
 ///A array of `TaskControlBlock` that is thread-safe
 pub struct TaskManager {
     ready_queue: VecDeque<Arc<TaskControlBlock>>,
@@ -23,7 +26,23 @@ impl TaskManager {
     }
     /// Take a process out of the ready queue
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
-        self.ready_queue.pop_front()
+        if let Some((target, _)) = self.ready_queue
+            .iter()
+            .enumerate()
+            .min_by(|x, y| {
+                let inner_x = x.1.inner_exclusive_access();
+                let inner_y = y.1.inner_exclusive_access();
+                inner_x.stride.cmp(&inner_y.stride)
+            })
+        {
+            let target = self.ready_queue.remove(target).unwrap();
+            let mut inner = target.inner_exclusive_access();
+            inner.stride += BIG_STRIDE / inner.priority;
+            drop(inner);  // rust 为什么在这里不自动推出生命周期提前结束呢？
+            Some(target)
+        } else {
+            None
+        }
     }
 }
 

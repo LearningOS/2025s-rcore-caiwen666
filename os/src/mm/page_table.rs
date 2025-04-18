@@ -276,3 +276,39 @@ impl Iterator for UserBufferIterator {
         }
     }
 }
+
+/// 将数据拷贝到某个地址空间的某个指针处
+pub fn copy_to_virt_addr<T: Sized>(token: usize, ptr: *const u8, data: &T) {
+    let len = core::mem::size_of::<T>();
+    let buffer = translated_byte_buffer(token, ptr, len);
+    unsafe {
+        let res_slice = core::slice::from_raw_parts(data as *const _ as usize as *const u8, len);
+        let mut ok = 0;
+        for piece in buffer {
+            piece.copy_from_slice(&res_slice[ok..ok + piece.len()]);
+            ok += piece.len();
+        }
+    }
+}
+
+/// 获取某段虚拟地址处的 flags
+/// 如果跨了多个页则取交集
+/// 如果某段地址无效则返回 None
+pub fn get_virt_addr_flags(token: usize, start_va: usize, end_va: usize) -> Option<PTEFlags> {
+    let page_table = PageTable::from_token(token);
+    let mut start = start_va;
+    let mut res = PTEFlags::all();
+    while start < end_va {
+        let start_va = VirtAddr::from(start);
+        let mut vpn = start_va.floor();
+        let pte = page_table.translate(vpn);
+        if pte.is_none() {
+            return None;
+        }
+        let pte = pte.unwrap();
+        res &= pte.flags();
+        vpn.step();
+        start = VirtAddr::from(vpn).into();
+    }
+    Some(res)
+}
