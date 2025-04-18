@@ -41,6 +41,7 @@ trait FrameAllocator {
     fn new() -> Self;
     fn alloc(&mut self) -> Option<PhysPageNum>;
     fn dealloc(&mut self, ppn: PhysPageNum);
+    fn space(&self) -> usize;
 }
 /// an implementation for frame allocator
 pub struct StackFrameAllocator {
@@ -82,6 +83,9 @@ impl FrameAllocator for StackFrameAllocator {
         }
         // recycle
         self.recycled.push(ppn);
+    }
+    fn space(&self) -> usize {
+        self.recycled.len() + (self.end - self.current)
     }
 }
 
@@ -133,4 +137,9 @@ pub fn frame_allocator_test() {
     }
     drop(v);
     println!("frame_allocator_test passed!");
+}
+
+/// 获取空闲物理页个数
+pub fn get_frame_space() -> usize {
+    FRAME_ALLOCATOR.exclusive_access().space()
 }
