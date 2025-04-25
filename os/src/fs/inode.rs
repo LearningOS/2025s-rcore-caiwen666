@@ -125,6 +125,16 @@ pub fn open_file(name: &str, flags: OpenFlags) -> Option<Arc<OSInode>> {
     }
 }
 
+/// 建立硬链接
+pub fn link_file(name: &str, target: &Arc<OSInode>) {
+    ROOT_INODE.link(name, target.get_inode_id())
+}
+
+/// 解除硬链接
+pub fn unlink_file(name: &str) {
+    ROOT_INODE.remove(name);
+}
+
 impl File for OSInode {
     fn readable(&self) -> bool {
         self.readable
@@ -155,5 +165,15 @@ impl File for OSInode {
             total_write_size += write_size;
         }
         total_write_size
+    }
+    
+    fn get_inode_id(&self) -> u32 {
+        let inner = self.inner.exclusive_access();
+        inner.inode.get_inode_id()
+    }
+    
+    fn nlink(&self) -> u32 {
+        let inner = self.inner.exclusive_access();
+        inner.inode.nlink()
     }
 }

@@ -149,3 +149,86 @@ fn efs_test() -> std::io::Result<()> {
 
     Ok(())
 }
+
+use rand::distributions::{Alphanumeric, DistString};
+use rand::Rng;
+fn generate_random_string(length: usize) -> String {
+    Alphanumeric.sample_string(&mut rand::thread_rng(), length)
+}
+
+#[test]
+fn link_test() -> std::io::Result<()> {
+    let block_file = Arc::new(BlockFile(Mutex::new({
+        let f = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open("target/fs.img")
+            .unwrap();
+        f.set_len(8192 * 512).unwrap();
+        f
+    })));
+    EasyFileSystem::create(
+        block_file.clone(),
+        4096,
+        1
+    );
+    let efs = EasyFileSystem::open(block_file.clone());
+    let root_inode = EasyFileSystem::root_inode(&efs);
+    root_inode.clear();
+    assert_eq!(root_inode.ls(), vec![] as Vec<String>);
+    let mut list = Vec::new();
+    let mut link_count = Vec::new();
+    let mut link_target = Vec::new();
+    let mut link_list = Vec::new();
+    for i in 0..=17 {
+        let name = generate_random_string(i + 1);
+        list.push(name.clone());
+        let file = root_inode.create(name.as_str()).unwrap();
+        file.write_at(0, name.repeat(1000).as_bytes());
+        link_count.push(1);
+    }
+    assert_eq!(root_inode.ls(), list);
+    let mut rng = rand::thread_rng();
+    for i in 0..=17 {
+        let link_to = rng.gen_range(0..=17);
+        link_target.push(link_to);
+        let target = root_inode.find(list[link_to].as_str()).unwrap();
+        let name = generate_random_string(i + 1);
+        link_list.push(name.clone());
+        root_inode.link(name.as_str(), target.get_inode_id());
+        link_count[link_to] += 1;
+        assert_eq!(root_inode.find(name.as_str()).unwrap().get_inode_id(), target.get_inode_id());
+    }
+    assert_eq!(root_inode.ls(), list.iter().chain(link_list.iter()).cloned().collect::<Vec<String>>());
+    for (i, target) in link_target.iter().enumerate() {
+        println!("{:?}", link_count);
+        let name = link_list[i].clone();
+        let content = list[*target].clone();
+        let file = root_inode.find(name.as_str()).unwrap();
+        let base = root_inode.find(content.as_str()).unwrap();
+        assert_eq!(file.get_inode_id(), base.get_inode_id());
+        println!("{}", base.get_inode_id());
+        assert_eq!(file.nlink(), link_count[*target] as u32);
+        let mut buffer = vec![0u8; content.repeat(999).as_bytes().len()];
+        file.read_at(content.as_bytes().len(), buffer.as_mut_slice());
+        let sa = content.repeat(999);
+        let sb = String::from_utf8(buffer).unwrap();
+        assert_eq!(sa, sb);
+        root_inode.remove(name.as_str());
+        link_count[*target] -= 1;
+        println!("{:?}", link_count);
+        println!("{:?}", list.iter().map(|v| {
+            root_inode.find(v.as_str()).unwrap().nlink() as i32
+        }).collect::<Vec<i32>>());
+        assert_eq!(link_count, list.iter().map(|v| {
+            root_inode.find(v.as_str()).unwrap().nlink() as i32
+        }).collect::<Vec<i32>>());
+    }
+    assert_eq!(root_inode.ls(), list);
+    for i in &list {
+        root_inode.remove(i.as_str());
+    }
+    assert_eq!(root_inode.ls(), Vec::<String>::new());
+    Ok(())
+}
