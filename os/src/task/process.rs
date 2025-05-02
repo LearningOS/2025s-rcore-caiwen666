@@ -24,6 +24,12 @@ pub struct ProcessControlBlock {
     inner: UPSafeCell<ProcessControlBlockInner>,
 }
 
+/**
+ * 由于一开始对这个死锁检测算法不太明白，印象里好像群里面有人讨论过，于是就在微信群里搜索聊天记录
+ * 一位助教说不要陷入银行家算法，所以我就反复看指导书里的算法过程，不再去管什么银行家算法了
+ * 其中 need 这个东西，我一开始不太明白，后来有个群友在群里说他是线程申请资源的时候将对应 need 加一，申请完毕之后将对应 need 减一
+ * 然后具体的实现我自己又脑补了一下，最终写出来
+ */
 /// 死锁检测需要的数据结构
 #[derive(Default, Debug)]
 pub struct DeadlockDetectData {
