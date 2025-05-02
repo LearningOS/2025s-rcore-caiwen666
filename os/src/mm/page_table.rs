@@ -274,3 +274,17 @@ impl Iterator for UserBufferIterator {
         }
     }
 }
+
+/// 将数据拷贝到某个地址空间的某个指针处
+pub fn copy_to_virt_addr<T: Sized>(token: usize, ptr: *const u8, data: &T) {
+    let len = core::mem::size_of::<T>();
+    let buffer = translated_byte_buffer(token, ptr, len);
+    unsafe {
+        let res_slice = core::slice::from_raw_parts(data as *const _ as usize as *const u8, len);
+        let mut ok = 0;
+        for piece in buffer {
+            piece.copy_from_slice(&res_slice[ok..ok + piece.len()]);
+            ok += piece.len();
+        }
+    }
+}

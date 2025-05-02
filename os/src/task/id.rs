@@ -151,7 +151,11 @@ impl TaskUserRes {
         ustack_base: usize,
         alloc_user_res: bool,
     ) -> Self {
-        let tid = process.inner_exclusive_access().alloc_tid();
+        let mut process_inner = process.inner_exclusive_access();
+        let tid = process_inner.alloc_tid();
+        process_inner.mutex_deadlock_detect.create_thread(tid);
+        process_inner.semaphore_deadlock_detect.create_thread(tid);
+        drop(process_inner);
         let task_user_res = Self {
             tid,
             ustack_base,
@@ -214,6 +218,8 @@ impl TaskUserRes {
     pub fn dealloc_tid(&self) {
         let process = self.process.upgrade().unwrap();
         let mut process_inner = process.inner_exclusive_access();
+        process_inner.mutex_deadlock_detect.release_thread(self.tid);
+        process_inner.semaphore_deadlock_detect.release_thread(self.tid);
         process_inner.dealloc_tid(self.tid);
     }
     /// The bottom usr vaddr (low addr) of the trap context for a task with tid

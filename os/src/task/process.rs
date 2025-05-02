@@ -9,6 +9,7 @@ use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{translated_refmut, MemorySet, KERNEL_SPACE};
 use crate::sync::{Condvar, Mutex, Semaphore, UPSafeCell};
 use crate::trap::{trap_handler, TrapContext};
+use alloc::collections::btree_map::BTreeMap;
 use alloc::string::String;
 use alloc::sync::{Arc, Weak};
 use alloc::vec;
@@ -21,6 +22,118 @@ pub struct ProcessControlBlock {
     pub pid: PidHandle,
     /// mutable
     inner: UPSafeCell<ProcessControlBlockInner>,
+}
+
+/// 死锁检测需要的数据结构
+#[derive(Default, Debug)]
+pub struct DeadlockDetectData {
+    /// 资源可用数量
+    pub available: BTreeMap<usize, usize>,
+    /// 线程已经分得资源的数量
+    pub allocation: BTreeMap<usize, BTreeMap<usize, usize>>,
+    /// 线程需要的资源的数量
+    pub need: BTreeMap<usize, BTreeMap<usize, usize>>
+}
+
+impl DeadlockDetectData {
+    /// 检查是否会有死锁
+    pub fn check_dead_lock(&self) -> bool {
+        // println!("in!!!!!!!!!!!!!!!!!!!");
+        // println!("{:#?}", self);
+        let mut work = self.available.clone();
+        let mut finish = BTreeMap::new();
+        for i in self.need.keys() {
+            finish.insert(*i, false);
+        }
+        loop {
+            if let Some((tid, is_finish)) = finish
+                .iter_mut()
+                .find(|(tid, is_finish)| {
+                    if **is_finish {
+                        return false;
+                    }
+                    let mut ok = true;
+                    for (rid, need_count) in self.need.get(*tid).unwrap() {
+                        if *need_count > *(work.get(rid).unwrap()) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    ok
+                })
+            {
+                let allocation = self.allocation.get(tid).unwrap();
+                for (rid, work_count) in &mut work {
+                    // println!("{:#?}\n{:#?}", rid, allocation);
+                    *work_count += allocation.get(rid).unwrap();
+                    *is_finish = true;
+                }
+            } else {
+                break;
+            }
+        }
+        if finish.iter().find(|(_, is_finish)| !(**is_finish)).is_some() {
+            // println!("failed!");
+            false
+        } else {
+            // println!("okok");
+            true
+        }
+    }
+    /// 线程创建
+    pub fn create_thread(&mut self, tid: usize) {
+        let mut empty_map = BTreeMap::new();
+        for rid in self.available.keys() {
+            empty_map.insert(*rid, 0);
+        }
+        self.allocation.insert(tid, empty_map.clone());
+        self.need.insert(tid, empty_map);
+    }
+    /// 线程释放
+    pub fn release_thread(&mut self, tid: usize) {
+        self.allocation.remove(&tid);
+        self.need.remove(&tid);
+    }
+    /// 插入资源
+    pub fn create_res(&mut self, rid: usize, count: usize) {
+        self.available.insert(rid, count);
+        for i in self.allocation.values_mut() {
+            i.insert(rid, 0);
+        }
+        for i in self.need.values_mut() {
+            i.insert(rid, 0);
+        }
+    }
+    /// 获取资源
+    pub fn down(&mut self, rid: usize, tid: usize) {
+        let allocation = self.allocation.get_mut(&tid).unwrap();
+        let pre = allocation.get_mut(&rid).unwrap();
+        *pre += 1;
+        let available = &mut self.available;
+        let pre = available.get_mut(&rid).unwrap();
+        *pre -= 1;
+    }
+    /// 增加需求
+    pub fn need(&mut self, tid: usize, rid: usize) {
+        let need_map = self.need.get_mut(&tid).unwrap();
+        let pre = need_map.get_mut(&rid).unwrap();
+        *pre += 1;
+    }
+    /// 增加需求
+    pub fn satisfy(&mut self, tid: usize, rid: usize) {
+        let need_map = self.need.get_mut(&tid).unwrap();
+        let pre = need_map.get_mut(&rid).unwrap();
+        *pre -= 1;
+    }
+    /// 释放资源
+    pub fn up(&mut self, rid: usize, tid: usize) {
+        let allocation = self.allocation.get_mut(&tid).unwrap();
+        let pre = allocation.get_mut(&rid).unwrap();
+        *pre -= 1;
+        let available = &mut self.available;
+        let pre = available.get_mut(&rid).unwrap();
+        *pre += 1;
+    }
 }
 
 /// Inner of Process Control Block
@@ -49,6 +162,12 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    /// 是否开启死锁检测
+    pub deadlock_detect: bool,
+    /// mutex 的死锁检测
+    pub mutex_deadlock_detect: DeadlockDetectData,
+    /// semaphore 的死锁检测
+    pub semaphore_deadlock_detect: DeadlockDetectData
 }
 
 impl ProcessControlBlockInner {
@@ -119,6 +238,9 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect: false,
+                    mutex_deadlock_detect: DeadlockDetectData::default(),
+                    semaphore_deadlock_detect: DeadlockDetectData::default()
                 })
             },
         });
@@ -245,6 +367,9 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect: parent.deadlock_detect,
+                    mutex_deadlock_detect: DeadlockDetectData::default(),
+                    semaphore_deadlock_detect: DeadlockDetectData::default()
                 })
             },
         });
